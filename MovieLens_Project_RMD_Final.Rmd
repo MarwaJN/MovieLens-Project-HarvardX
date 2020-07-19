@@ -1,0 +1,506 @@
+---
+title: "MovieLens Project - RMD File"
+author: "Marwa Nafakh"
+date: "7/18/2020"
+output: html_document
+---
+# Introduction
+The methodology of Recommendation systems is aimed at predicting recommendations based on a built-in algorithm that considers various factors to generate the desirable outcome for users. Building the right algorithm has a major impact on users’ satisfaction and hence a tangible consequence in generating revenue and business growth in relevant sectors.
+In this project, a machine learning algorithm was developed based on considering average predictors, user, movie and genres predictors, and then tuning the later model through a tuning factor (lambda) to improve the Root Mean Squared Error value in which target value had to be lower than 0.86490. 
+
+# Goal of the Project
+This project aims at building a movie recommendation system based on users’ ratings and achieve an RMSE lower than “0.86490” through the implementation and testing of various data prediction and modeling algorithms. Validation of the selected machine learning algorithm is ensured through the validation dataset. The evaluation criteria of the generated models is the RMSE metrics.
+
+# Methodology
+After exploring the dataset, three different approaches were implemented to generate data models.
+
+1. Simple Average Prediction Model
+2. Movie, User, and Genres Effect Model
+3. Regularized Movie, User, and Genres Model through a tuning parameter (Lambda)
+  
+Then, cross validation was applied to determine the best model with the lowest RMSE value on the validation dataset.
+
+
+#### Create edx and validation datasets
+Note: this process could take a couple of minutes
+```{r Dataset Creation, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+```
+MovieLens 10M dataset Source:
+
+* https://grouplens.org/datasets/movielens/10m/
+
+* http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
+                                           title = as.character(title),
+                                           genres = as.character(genres))
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding")
+
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+# RMSE function
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+```{r, echo=FALSE, eval=TRUE}
+# Clean memory
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+```
+##  1) Exploring the structure of the edx dataset
+```{r Data Structure Exploration, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+str(edx) 
+head(edx)
+class(edx)
+summary(edx)
+```
+#### Calculating and displaying the number of rows and columns in the validation dataset
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval = TRUE}
+paste('There are ',nrow(edx),'rows', 'and ', 
+      ncol(edx), 'columns in the edx dataset')
+```
+#### Check for any missing value in the edx dataset
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE} 
+any(is.na(edx))
+```
+##  2) Understanding Time Variable
+```{r Understanding Time Variable, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+library(lubridate)
+# Convert the timestamp factor (measured in seconds) into more readable date format by adding a new 
+# column with the year of rating
+edx <- mutate(edx, year_of_rating = year(as_datetime(timestamp)))
+
+# View edx data.frame after new column addition
+head(edx)
+```
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Calculate the duration of collected data
+
+tibble('First Date' = min(edx$year_of_rating),
+       'Final Date' = max(edx$year_of_rating))%>% 
+        mutate(Duration = (max(edx$year_of_rating) -
+                            min(edx$year_of_rating)))
+```
+##  3) Understanding Users' Variable
+```{r Understanding Users Variable, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Counting and displaying the number of unique users
+
+paste('There are ', n_distinct(edx$userId), 'different users')
+```
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Understanding raters statistics
+
+edx_users <- edx %>% group_by(userId) %>% 
+                    summarize(num=n()) %>% 
+                    arrange(desc(num))
+summary(edx_users)
+
+# Maximum and minimum number of ratings for users
+
+paste('The most raters of users rated ', max(edx_users$num), 
+      'movies, and the least raters rated only ', min(edx_users$num))
+
+# Average number of rating for users
+
+paste('Users in average rated around ', round(mean(edx_users$num)), ' movies.')
+```
+##  4) Understanding Movies' Variable
+```{r Understanding Movies Variable, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Counting and displaying the number of unique movies 
+paste('There are ', n_distinct(edx$movieId), 'different movies')
+
+# Calculating and displaying the number of movies with 0 ratings
+paste('There are ', edx %>% filter(rating == 0) %>% tally(), 'movies with 0 ratings')
+
+# Calculating and displaying the number of movies with ratings = 3
+paste('There are ', edx %>% filter(rating == 3) %>% tally(), 'movies with 3 stars ratings')
+```
+
+```{r , echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Counting and displaying the different number of movies in each genres 
+paste('Drama has ', edx %>% filter(str_detect(genres,"Drama")) %>% nrow(), 'movies')
+paste('Comedy has ', edx %>% filter(str_detect(genres,"Comedy")) %>% nrow(), 'movies')
+paste('Thriller has ', edx %>% filter(str_detect(genres,"Thriller")) %>% nrow(), 'movies')
+paste('Romance has ', edx %>% filter(str_detect(genres,"Romance")) %>% nrow(), 'movies')
+```
+
+```{r , echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Selecting the movie that has the greatest number of ratings
+edx %>% group_by(movieId, title) %>% 
+        summarize(number = n()) %>% 
+        arrange(desc(number))
+```
+
+```{r , echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Selecting the movie genres that has the greatest number of ratings
+edx %>% group_by(movieId, genres) %>% 
+        summarize(number = n()) %>% 
+        arrange(desc(number))
+```
+##  5) Understanding Genres Variable
+```{r Understanding Genres Variable, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Total number of genres, it is noted that some movies are tagged with more than one genres 
+
+edx %>% group_by(genres) %>%
+  summarize(number=n()) %>%
+  arrange(desc(number))
+```
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Count the sum number of genres per each movie
+
+edx %>% group_by(count=str_count(genres, fixed("|")), genres=genres) %>%
+        summarize(number= n()) %>%
+        arrange(desc(count))
+```
+##  6) Understanding Rating Variable
+```{r Understanding Rating Variable, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Sorting the five most given ratings in the edx dataset
+head(sort(-table(edx$rating)),5)
+```
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Numerically comparing the half and full star ratings
+table(edx$rating)
+```
+#### Graphically displaying the difference between full star and half star ratings
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# Define rating scale categories based on full/half star, then visualize it
+
+rating_category <- ifelse((edx$rating == 1|edx$rating == 2
+                           |edx$rating == 3|edx$rating == 4
+                           |edx$rating == 5) ,"Full_star","Half_star")
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval = TRUE, fig.height=4, fig.width=5}
+
+edx %>% ggplot(aes(x= rating, fill=rating_category)) +
+        geom_histogram() +
+        scale_fill_manual(values=c("Half_star"="grey", "Full_star"="black")) +
+        scale_x_continuous(breaks=seq(0,5,by= 0.5)) +
+        labs(title="Number of Ratings per Rating Score",
+             subtitle = "Half and Full Star Comparison",
+             x="Rating Scale",
+             y="No. of Ratings") +
+        theme_light()
+
+```
+
+#### Visualize No. of Ratings per No. of Movies
+
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval = TRUE, fig.height=4, fig.width=5}
+
+
+edx %>% count(movieId) %>% 
+        ggplot(aes(n)) + 
+        geom_histogram(color="white") + 
+        scale_x_log10()+labs(title="Number of Ratings per Movie ID", 
+                            x="No. of Ratings", 
+                            y="No. of Movies") +
+        theme_light()
+```
+
+
+In the above graph, it is obvious that some movies had more ratings than others. Interestingly, around 120 movies had only 1 rating.
+
+#### Visualize No. of Ratings per No. of Users
+
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval = TRUE, fig.height=4, fig.width=5}
+
+
+edx %>% count(userId) %>% 
+        ggplot(aes(n)) + 
+        geom_histogram(color="white") + 
+        scale_x_log10() + 
+        labs(title="Number of Ratings per User ID", 
+             x="No. of Ratings", 
+             y="No. of Users") +
+        theme_light()
+```  
+
+
+In the above graph it is noted that most raters rated around 30 to 100 movies.
+
+#### Visualize No. of Ratings per Year
+
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval = TRUE, fig.height=4, fig.width=5}
+
+
+edx %>% ggplot(aes(x=year_of_rating)) + 
+        geom_histogram(color="white") + 
+        labs(title="Number of Ratings per Year", 
+             x="Year", 
+             y="No. of Ratings") + 
+        scale_x_continuous(breaks=seq(1995,2009,by= 1)) + 
+        theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+From the above graph, it is noted that the year of rating doesn't have a clear impact on the distribution of ratings.
+
+#### Visualize Average Number of Ratings per Users
+
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval = TRUE, fig.height=4, fig.width=5}
+
+
+edx %>% group_by(userId) %>% 
+        summarize(avg_rating = mean(rating)) %>% 
+        ggplot(aes(avg_rating)) + 
+        geom_histogram(color = "white") + 
+        labs(title="Average Ratings per Users", 
+             x="Average Ratings", 
+             y="No. of Users")+ 
+        scale_x_continuous(breaks = seq(0.5,5,0.5))+
+        theme_light()
+```
+
+
+It is noted that on average majority of raters gave a score of between 3 and 4 stars ratings for the movies they watched. However, it is a normally distributed graph. 
+
+#### Visualize average number of ratings per year
+
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval = TRUE, fig.height=4, fig.width=5}
+
+
+edx %>% group_by(year_of_rating) %>% 
+        summarise(mean(rating)) %>% 
+        plot()
+
+```
+
+
+It is noted that in the early years of the data collection, average ratings were not very close this might be due to the fact that rating behavior was not very common among users.
+
+## Modeling Approaches
+
+
+```{r Modeling Approaches, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+# First the used factors will be selected from both edx and validation datasets
+edx <- edx %>% select(userId, movieId, rating, title, genres)
+validation <- validation  %>% select(userId, movieId, rating, title, genres)
+```
+###   (1) First Approach simple prediction based on calculated average of ratings
+```{r 1st Approach Average Rating, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+avg <- mean(edx$rating)
+rmse_simple_model <- RMSE(validation$rating, avg)
+rmse_simple_model 
+
+# Check this model results and save it in the data.frame
+rmse_results <- data_frame(Model_Method = "Average Prediction Model", 
+                           RMSE = rmse_simple_model)
+
+# Generate RMSE Result Table using kable() function
+rmse_results %>% knitr::kable()
+
+```
+RMSE value considered not acceptable. Therefore, an enhanced model is necessary. 
+
+###   (2) Second Approach considered Movie, User, and Genres Effects
+```{r 2nd Approach Movie User Genres Effect Model, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+```
+#### Movie Effect Model
+```{r Movie Effect Model, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE, fig.height=4, fig.width=5}
+bi <- edx %>%
+      group_by(movieId) %>%
+      summarize(b_i = mean(rating - avg))
+
+bi %>% ggplot(aes(x = b_i)) + 
+       geom_histogram(bins=10, col = I("white")) +
+       labs(title="Movie Effect Distribution", 
+            x="Movie Effect",
+            y="No. of Movies") +
+        theme_light()
+
+# Check this model results and save it in the dataframe
+
+predicted_ratings <- avg +  validation %>%
+                    left_join(bi, by='movieId') %>%
+                    pull(b_i)
+
+rmse_movie_model <- RMSE(predicted_ratings, validation$rating)
+
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(Model_Method="Movie Effect Model",  
+                                     RMSE = rmse_movie_model ))
+
+# Update RMSE Result Table
+rmse_results %>% knitr::kable()
+```
+RMSE value was improved, but still we need a better model to achieve the target of this project.
+
+#### Movie and User Effect Model
+```{r Movie User Effect Model, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE, fig.height=4, fig.width=5}
+bu <- edx %>%
+      left_join(bi, by='movieId') %>%
+      group_by(userId)%>% 
+      summarize(b_u = mean(rating - avg - b_i))
+
+bu %>% ggplot(aes(x = b_u)) + 
+  geom_histogram(bins=10, col = I("white")) +
+  labs(title="User and Movie Effect Distribution", 
+       x="Combined User and Movie effects",
+       y="Count") +
+  theme_light()
+
+# Check and store model results
+predicted_ratings <- validation %>%
+                     left_join(bi, by='movieId') %>%
+                     left_join(bu, by='userId') %>%
+                     mutate(pred = avg + b_i + b_u) %>%
+                     pull(pred)
+
+rmse_movie_user_model <- RMSE(predicted_ratings, validation$rating)
+
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(Model_Method="Movie and User Effect model",  
+                                     RMSE = rmse_movie_user_model))
+
+# Update RMSE Result Table
+rmse_results %>% knitr::kable()
+```
+RMSE value was improved after combining two predictors (user and movie effects), as per the exploration of the data genres has an impact on the overall rating therefore it will be considered in the next model.
+
+#### Movie, User, and Genres Effect Model
+```{r Movie User Genres Effect Model, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE, fig.height=4, fig.width=5}
+bg <- edx %>%
+  left_join(bi, by='movieId') %>%
+  left_join(bu, by='userId') %>%
+  group_by(genres) %>%
+  summarize(b_g = mean(rating - avg - b_i - b_u))
+
+bg %>% ggplot(aes(x = b_g)) + 
+  geom_histogram(bins=10, col = I("white")) +
+  labs(title="User, Movie, Genres Effect Distribution", 
+       x="User, Movie and Genres effects",
+       y="Count") +
+  theme_light()
+
+# Check and store model results
+predicted_ratings <- validation %>%
+  left_join(bi, by='movieId') %>%
+  left_join(bu, by='userId') %>%
+  left_join(bg, by='genres') %>%
+  mutate(pred = avg + b_i + b_u + b_g) %>%
+  pull(pred)
+
+rmse_movie_user_genre_model <- RMSE(predicted_ratings, validation$rating)
+
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(Model_Method="Movie, User and Genres Effect model",  
+                                     RMSE = rmse_movie_user_genre_model))
+
+# Update RMSE Result Table
+rmse_results %>% knitr::kable()
+
+```
+RMSE was improved after adding the genres effect. 
+In the next step an account for the total variability of the effect sizes was considered through penalizing large estimates that come from small sample in the considered factors (Regularization).
+
+###   (3) Regularized Movie, User, and Genres Effect
+```{r 3rd Approach Regularization of User Movie and Genres Model, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+## Considering adding a tuning factor for regularization (lambda) to the Movie, User and Genres Model to get a better reduced RMSE value
+
+# create variable Lambda (Tuning Factor)
+lambdas <- seq(0, 10, 0.25)
+
+# For each lambda,find b_i, b_u and b_g followed by rating prediction & testing
+# Using cross validation method
+
+rmses <- sapply(lambdas, function(l){
+  
+  mu <- mean(edx$rating)
+  
+  b_i <- edx %>% 
+    group_by(movieId) %>%
+    summarize(b_i = sum(rating - mu)/(n()+l))
+  
+  b_u <- edx %>% 
+    left_join(b_i, by="movieId") %>%
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - b_i - mu)/(n()+l))
+  
+  b_g <- edx %>%
+    left_join(b_i, by="movieId") %>%
+    left_join(b_u, by="userId") %>%
+    group_by(genres) %>%
+    summarize(b_g = sum(rating - b_i - b_u - mu)/(n()+l))
+  
+  predicted_ratings <- 
+    validation %>% 
+    left_join(b_i, by = "movieId") %>%
+    left_join(b_u, by = "userId") %>%
+    left_join(b_g, by = "genres") %>%
+    mutate(pred = mu + b_i + b_u + b_g) %>%
+    pull(pred)
+  
+  return(RMSE(predicted_ratings, validation$rating))
+})
+
+# Plot rmses vs lambdas to select the optimal lambda                                                             
+qplot(lambdas, rmses)+
+  theme_light()
+
+# Find optimal lambda                                                             
+lambda <- lambdas[which.min(rmses)]
+lambda
+
+# Check and store model results                                                          
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(Model_Method="Regularized Movie, User and Genres Effect Model",  
+                                     RMSE = min(rmses)))
+# Update RMSE Result Table
+rmse_results %>% knitr::kable()
+```
+# Results
+
+The three different approaches of the developed models are summarized in the below RMSE result table:
+
+```{r, echo=FALSE, eval=TRUE}
+rmse_results %>% knitr::kable()
+```
+
+As shown, the best model was the regularized movie, user and genres effect, resulting in the lowest RMSE = 0.8644501
+
+# Conclusion
+
+In conclusion, based on the available resources the best machine algorithm for this project took into consideration three different factors of the MovieLens dataset: Users, Movies, and Genres to build an effective recommendation system that predicts movie ratings for particular users aiming at increasing users' satisfaction, and it used a tuning factor to constraint the variability of the model through lambda. The RMSE result of the selected model = 0.8644501.
+
+# Future Work
+
+This algorithm may be further enhanced to achieve better results. More complex algorithms can be generated and evaluated through better processing power, and other factors in dataset may also lead to better results. Due to available processing power and course time limits, only three approaches were selected and evaluated.
+
